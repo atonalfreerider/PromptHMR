@@ -278,7 +278,7 @@ class Pipeline:
 
 
     def __call__(self, input_video, output_folder, static_cam=False, 
-                 save_only_essential=False, max_frame=None):
+                 save_only_essential=False, max_frame=None, batch_mode=False):
 
         def cvt_to_numpy(d):
             for k, v in d.items():
@@ -294,7 +294,8 @@ class Pipeline:
         self.seq_folder = seq_folder
         self.cfg.seq_folder = seq_folder
 
-        if os.path.isfile(f'{seq_folder}/results.pkl'):
+        # Skip loading existing results in batch mode to ensure clean processing
+        if not batch_mode and os.path.isfile(f'{seq_folder}/results.pkl'):
             print('Loading available results...')
             self.results = joblib.load(f'{seq_folder}/results.pkl')
             return self.results
@@ -367,39 +368,44 @@ class Pipeline:
                 _ = track.pop('vitpose', None)
                 _ = track.pop('prhmr_img_feats', None)
                 
-        joblib.dump(self.results, f'{seq_folder}/results.pkl')
+        # Only save pkl file if not in batch mode
+        if not batch_mode:
+            joblib.dump(self.results, f'{seq_folder}/results.pkl')
         
-        NUM_FRAMES = len(self.images)
-        MCS_OUTPUT_PATH = f'{seq_folder}/world4d.mcs'
-        smpl_paths = []
-        per_body_frame_presence = []
-        for k,v in self.results['people'].items():
-            out_smpl_f = f'{os.path.abspath(self.cfg.seq_folder)}/subject-{k}.smpl'
+        # Skip MCS/GLB export in batch mode to avoid conflicts
+        if not batch_mode:
+            NUM_FRAMES = len(self.images)
+            MCS_OUTPUT_PATH = f'{seq_folder}/world4d.mcs'
+            smpl_paths = []
+            per_body_frame_presence = []
+            for k,v in self.results['people'].items():
+                out_smpl_f = f'{os.path.abspath(self.cfg.seq_folder)}/subject-{k}.smpl'
+                
+                SMPLCodec(
+                    shape_parameters=v['smplx_world']['shape'].mean(0),
+                    body_pose=v['smplx_world']['pose'][:, :22*3].reshape(-1,22,3), 
+                    body_translation=v['smplx_world']['trans'],
+                    frame_count=v['frames'].shape[0], frame_rate=float(self.cfg.fps)
+                ).write(out_smpl_f)
+                smpl_paths.append(out_smpl_f)
+                per_body_frame_presence.append([int(v['frames'][0]), int(v['frames'][-1])+1])
             
-            SMPLCodec(
-                shape_parameters=v['smplx_world']['shape'].mean(0),
-                body_pose=v['smplx_world']['pose'][:, :22*3].reshape(-1,22,3), 
-                body_translation=v['smplx_world']['trans'],
-                frame_count=v['frames'].shape[0], frame_rate=float(self.cfg.fps)
-            ).write(out_smpl_f)
-            smpl_paths.append(out_smpl_f)
-            per_body_frame_presence.append([int(v['frames'][0]), int(v['frames'][-1])+1])
-        
-        export_scene_with_camera(
-            smpl_buffers=[open(path, 'rb').read() for path in smpl_paths],
-            frame_presences=per_body_frame_presence,
-            num_frames=NUM_FRAMES,
-            output_path=MCS_OUTPUT_PATH,
-            rotation_matrices=self.results['camera_world']['Rcw'],
-            translations=self.results['camera_world']['Tcw'],
-            focal_length=self.results['camera_world']['img_focal'],
-            principal_point=self.results['camera_world']['img_center'],
-            frame_rate=float(self.cfg.fps),
-            smplx_path='data/body_models/smplx/SMPLX_neutral_array_f32_slim.npz',
-        )
-
-        print("Usage:")
-        print(f'\tYou can drag and drop the "world4d.mcs" file to https://me.meshcapade.com/editor to view the result')
-        print(f'\tYou can import the "world4d.glb" file on Blender to view the result')
+            export_scene_with_camera(
+                smpl_buffers=[open(path, 'rb').read() for path in smpl_paths],
+                frame_presences=per_body_frame_presence,
+                num_frames=NUM_FRAMES,
+                output_path=MCS_OUTPUT_PATH,
+                rotation_matrices=self.results['camera_world']['Rcw'],
+                translations=self.results['camera_world']['Tcw'],
+                focal_length=self.results['camera_world']['img_focal'],
+                principal_point=self.results['camera_world']['img_center'],
+                frame_rate=float(self.cfg.fps),
+            )
+            print(f'MCS file saved to "{os.path.abspath(MCS_OUTPUT_PATH)}"')
+            print(f'You can drag and drop the "world4d.mcs" file to https://me.meshcapade.com/editor to view the result')
+            
+            shutil.copy(MCS_OUTPUT_PATH, f'{seq_folder}/world4d.glb')
+            print(f'GLB file saved to "{os.path.abspath(f"{seq_folder}/world4d.glb")}"')
+            print(f'You can import the "world4d.glb" file on Blender to view the result')
         
         return self.results
