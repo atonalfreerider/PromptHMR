@@ -205,10 +205,31 @@ def world_hps_estimation(cfg, results, smplx):
         smplx_trans = trans
         smplx_betas = shape
         
+        # Compute 3D joint positions in world coordinates
+        pred_pose_aa = smplx_pose
+        B = pred_pose_aa.shape[0]
+        smplx_output = smplx(
+            global_orient=pred_pose_aa[:, :3], 
+            body_pose=pred_pose_aa[:, 3:66],
+            left_hand_pose=pred_pose_aa[:, 75:120],
+            right_hand_pose=pred_pose_aa[:, 120:],
+            betas=smplx_betas, 
+            transl=smplx_trans,
+            jaw_pose=torch.zeros(B, 3).to(pred_pose_aa),
+            leye_pose=torch.zeros(B, 3).to(pred_pose_aa),
+            reye_pose=torch.zeros(B, 3).to(pred_pose_aa),
+            expression=torch.zeros(B, 10).to(pred_pose_aa),
+        )
+        
+        # Extract SMPL 24 joints (first 24 joints from SMPLX output)
+        pred_joints_24 = smplx_output.joints[:, :24]  # Shape: (B, 24, 3)
+        
         results['people'][k]['smplx_world'] = {
             'pose': smplx_pose,
             'shape': smplx_betas,
             'trans': smplx_trans,
+            'joints3d': pred_joints_24,  # SMPL 24 joints in world coordinates
+            'joints3d_format': 'SMPL_24',  # Metadata about joint format
         }
         
 
