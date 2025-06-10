@@ -55,6 +55,8 @@ bash scripts/fetch_data.sh
 python scripts/demo_phmr.py --image data/examples/example_1.jpg --gravity_align
 ```
 
+NOTE: SINGLE IMAGE REQUIRES GVHMR, C++ libs, SMPL - DO NOT USE
+
 **For world-coordinate video reconstruction**, first install the precompiled wheels as described in our installation guide. After installation, run the example commands below—results will be visualized using Viser.
 If you're working with a long sequence containing many people, consider using `--viser_total` to limit the number of frames visualized, or `--viser_subsample` to subsample frames.
 For other hyperparameters, refer to `pipeline/config.yaml`.
