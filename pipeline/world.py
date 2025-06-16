@@ -34,7 +34,7 @@ def transform_smpl_params(root_orient, transl, R, t, smpl_t_pose_pelvis):
     return root_orient, transl
 
 
-def world_hps_estimation(cfg, results, smplx):
+def world_hps_estimation(cfg, results, smplx_model):
 
     colors = np.loadtxt('pipeline/colors.txt')/255
     colors = torch.from_numpy(colors).float()
@@ -87,7 +87,7 @@ def world_hps_estimation(cfg, results, smplx):
 
         cam_r = Rwc[frame]
         cam_t = Twc[frame]
-        smpl_t_pose_pelvis = smplx(
+        smpl_t_pose_pelvis = smplx_model(
             global_orient=torch.zeros(1, 3), 
             body_pose=torch.zeros(1, 21*3), 
             betas=mean_shape
@@ -101,7 +101,7 @@ def world_hps_estimation(cfg, results, smplx):
         
         pred_pose_aa = matrix_to_axis_angle(pred_rotmat.reshape(-1, 3, 3)).reshape(-1, 55*3)
         B = pred_pose_aa.shape[0]
-        pred = smplx(
+        pred = smplx_model(
             global_orient=pred_pose_aa[:, :3], 
             body_pose=pred_pose_aa[:, 3:66],
             left_hand_pose=pred_pose_aa[:, 75:120],
@@ -208,7 +208,7 @@ def world_hps_estimation(cfg, results, smplx):
         # Compute 3D joint positions in world coordinates
         pred_pose_aa = smplx_pose
         B = pred_pose_aa.shape[0]
-        smplx_output = smplx(
+        smplx_output = smplx_model(
             global_orient=pred_pose_aa[:, :3], 
             body_pose=pred_pose_aa[:, 3:66],
             left_hand_pose=pred_pose_aa[:, 75:120],
@@ -221,15 +221,18 @@ def world_hps_estimation(cfg, results, smplx):
             expression=torch.zeros(B, 10).to(pred_pose_aa),
         )
         
-        # Extract SMPL 24 joints (first 24 joints from SMPLX output)
-        pred_joints_24 = smplx_output.joints[:, :24]  # Shape: (B, 24, 3)
+        # Extract ALL SMPL-X joints (not just first 24)
+        pred_joints_full = smplx_output.joints  # Shape: (B, N, 3) where N is full SMPL-X joint count
+        
+        print(f"DEBUG: Full SMPL-X joints shape: {pred_joints_full.shape}")
+        print(f"DEBUG: Total joints available: {pred_joints_full.shape[1]}")
         
         results['people'][k]['smplx_world'] = {
             'pose': smplx_pose,
             'shape': smplx_betas,
             'trans': smplx_trans,
-            'joints3d': pred_joints_24,  # SMPL 24 joints in world coordinates
-            'joints3d_format': 'SMPL_24',  # Metadata about joint format
+            'joints3d': pred_joints_full,  # ALL SMPL-X joints preserved
+            'joints3d_format': 'SMPLX_FULL',  # Updated metadata
         }
         
 

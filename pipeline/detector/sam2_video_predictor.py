@@ -94,6 +94,9 @@ class SAM2VideoPredictor(SAM2Base):
         # the original video height and width, used for resizing final output scores
         inference_state["video_height"] = video_height
         inference_state["video_width"] = video_width
+        # Store original image dimensions for coordinate conversion
+        inference_state["original_video_height"] = video_height
+        inference_state["original_video_width"] = video_width
         inference_state["device"] = compute_device
         if offload_state_to_cpu:
             inference_state["storage_device"] = torch.device("cpu")

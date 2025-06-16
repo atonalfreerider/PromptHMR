@@ -256,7 +256,15 @@ def detect_segment_track_sam(images, out_path, paths_dict, debug_masks, sam2_typ
         if debug_masks:
             img_debug = images[start_frame][..., ::-1].copy()
             
+        # Store initial 2D keypoints for each person
+        initial_keypoints_2d = {}
+        initial_keypoints_2d_format = {}
         for idx in range(len(best_boxes)):
+            # Store the original 2D keypoints from detectron2 (17 COCO keypoints with confidence)
+            # detectron2 keypoints format: [x, y, confidence] for each keypoint
+            initial_keypoints_2d[idx + 1] = best_keypoints[idx]  # Keep all dimensions (x,y,conf)
+            initial_keypoints_2d_format[idx + 1] = 'coco17'  # Store format info
+            
             pos_kp = best_keypoints[idx][best_keypoints[idx, :, 2] > kp_thres]
             neg_kp = []
             if filter_ng_points:
@@ -336,6 +344,9 @@ def detect_segment_track_sam(images, out_path, paths_dict, debug_masks, sam2_typ
                         'frames': [],
                         'bboxes': [],
                         'masks': [],
+                        'initial_keypoints_2d': initial_keypoints_2d.get(obj_id, np.zeros((17, 3))),  # Store initial 2D keypoints with confidence
+                        'initial_keypoints_2d_format': initial_keypoints_2d_format.get(obj_id, 'coco17'),  # Store format
+                        'detection_bbox': best_boxes[obj_id - 1] if obj_id <= len(best_boxes) else np.zeros(4),  # Store detection bbox
                     }
                 track_results[obj_id]['frames'].append(t)
                 obj_msk = (obj_msk[0] > 0.0).cpu().numpy().astype(np.bool_)

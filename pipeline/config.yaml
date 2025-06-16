@@ -26,3 +26,18 @@ fps: 30
 postopt_lr: 1e-2
 num_max_people: 100
 max_fps: 60
+
+smplx:
+  use_hands: true
+  use_face: true
+  use_face_contour: true
+  num_hand_pca_comps: 45
+  num_expression_coeffs: 10
+  flat_hand_mean: true
+  extract_all_joints: true
+
+joints:
+  use_full_smplx: true
+  no_truncation: true
+  preserve_all_joints: true
+  max_joints: null

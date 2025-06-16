@@ -32,8 +32,32 @@ def estimate_kp2ds_from_bbox_vitpose(model, images, bboxes, track_id, frame_inds
         # Run inference
         keypoints, kps_img = model.inference_wbbox(img, bbox)
         kp2d_save = copy.deepcopy(keypoints)
+        # Keep the original flipping for existing pipeline compatibility
         kp2d_save[:, :2] = kp2d_save[:, :2][:, ::-1] 
         all_kp2ds.append(kp2d_save)
+
+    all_kp2ds = np.array(all_kp2ds)
+    return all_kp2ds
+
+
+def estimate_kp2ds_from_bbox_vitpose_original(model, images, bboxes, track_id, frame_inds):
+    """
+    Version that returns original coordinates without flipping for JSON export.
+    """
+    all_kp2ds = []
+
+    for ind, ith in enumerate(frame_inds):
+        img, bbox = images[ind], bboxes[ind]
+
+        if isinstance(img, str):
+            img = cv2.imread(img)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        # Run inference
+        keypoints, kps_img = model.inference_wbbox(img, bbox)
+        # Store original coordinates without flipping - keep all data including confidence
+        kp2d_original = copy.deepcopy(keypoints)
+        all_kp2ds.append(kp2d_original)
 
     all_kp2ds = np.array(all_kp2ds)
     return all_kp2ds

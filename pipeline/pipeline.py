@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 
 from smplx import SMPLX
 from pipeline.detector import segment
-from pipeline.detector.vitpose_estimator import load_vit_model, estimate_kp2ds_from_bbox_vitpose
+from pipeline.detector.vitpose_estimator import load_vit_model, estimate_kp2ds_from_bbox_vitpose, estimate_kp2ds_from_bbox_vitpose_original
 from pipeline.kp_utils import convert_kps
 from pipeline.utils import prepare_inputs, load_video_frames, interpolate_bboxes
 from pipeline.tools import detect_track, detect_segment_track_sam, est_camera, est_calib
@@ -40,8 +40,21 @@ class Pipeline:
             f'data/body_models/smplx/SMPLX_NEUTRAL.npz', 
             use_pca=False, 
             flat_hand_mean=True, 
-            num_betas=10
+            num_betas=10,
+            # Enable ALL SMPL-X components for full joint set
+            use_face_contour=True,
+            use_hands=True,
+            use_face=True,
+            num_hand_pca_comps=45,
+            num_expression_coeffs=10,
         )
+        
+        # Debug SMPL-X initialization
+        print(f"SMPL-X initialized with {self.smplx.J_regressor.shape[0]} joints")
+        if self.smplx.J_regressor.shape[0] <= 24:
+            print("WARNING: SMPL-X model may not include full joint set!")
+        else:
+            print(f"SUCCESS: Full SMPL-X model loaded with {self.smplx.J_regressor.shape[0]} joints")
 
 
     def load_frames(self, input_video, output_folder, read_frames=True):
@@ -93,9 +106,18 @@ class Pipeline:
     def estimate_2d_keypoints(self,):
         model = load_vit_model(model_path='data/pretrain/vitpose-h-coco_25.pth')
         for k, v in self.results['people'].items():
+            # Get regular keypoints for existing pipeline
             kpts_2d = estimate_kp2ds_from_bbox_vitpose(model, self.images, v['bboxes'], k, v['frames'])
             kpts_2d = convert_kps(kpts_2d, 'vitpose25', 'openpose')
             self.results['people'][k]['keypoints_2d'] = kpts_2d
+            
+            # Get original coordinates for JSON export (without coordinate flipping) - preserve ALL keypoints
+            kpts_2d_original = estimate_kp2ds_from_bbox_vitpose_original(model, self.images, v['bboxes'], k, v['frames'])
+            
+            # Store the full VitPose25 keypoints without truncation
+            self.results['people'][k]['keypoints_2d_json'] = kpts_2d_original
+            self.results['people'][k]['keypoints_2d_format'] = 'vitpose25'  # Store format info
+            
             coco_kp2d = convert_kps(kpts_2d, 'ophandface', 'cocoophf')
             self.results['people'][k]['vitpose'] = coco_kp2d
             
@@ -205,7 +227,23 @@ class Pipeline:
 
 
     def world_hps_estimation(self, ):
+        # BEFORE calling world_hps_estimation, check SMPL-X configuration
+        print(f"DEBUG: SMPL-X model joint count: {self.smplx.J_regressor.shape[0]}")
+        print(f"DEBUG: SMPL-X model vertex count: {self.smplx.J_regressor.shape[1]}")
+        print(f"DEBUG: SMPL-X use_hands: {getattr(self.smplx, 'use_hands', 'not set')}")
+        print(f"DEBUG: SMPL-X use_face: {getattr(self.smplx, 'use_face', 'not set')}")
+        
         self.results = world_hps_estimation(self.cfg, self.results, self.smplx)
+        
+        # AFTER world_hps_estimation, check what we got
+        for pid, person_data in self.results['people'].items():
+            if 'smplx_world' in person_data and 'joints3d' in person_data['smplx_world']:
+                joints3d = person_data['smplx_world']['joints3d']
+                if len(joints3d) > 0:
+                    first_joints = joints3d[0]
+                    print(f"DEBUG: Person {pid} - joints3d[0] shape: {first_joints.shape if hasattr(first_joints, 'shape') else len(first_joints)}")
+                    break
+        
         self.results['has_hps_world'] = True
         return
     
@@ -364,9 +402,12 @@ class Pipeline:
             _ = self.results.pop('masks', None)
             for tid, track in self.results['people'].items():
                 _ = track.pop('masks', None)
-                _ = track.pop('keypoints_2d', None)
+                # DO NOT remove keypoints_2d_json - we need this for JSON export
+                _ = track.pop('keypoints_2d', None)  
                 _ = track.pop('vitpose', None)
                 _ = track.pop('prhmr_img_feats', None)
+                # ENSURE we preserve smplx_world with ALL joints
+                # DO NOT truncate any joint data here
                 
         # Only save pkl file if not in batch mode
         if not batch_mode:
