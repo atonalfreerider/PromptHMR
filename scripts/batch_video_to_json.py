@@ -282,6 +282,42 @@ def __save_batch_camera_json(camera_data: Dict, output_path: str, batch_num: int
         json.dump(camera_traj, f, indent=2)
 
 
+def __validate_pkl_results(pkl_path: str) -> bool:
+    """Validate the PKL file by checking if it can be loaded and contains expected data."""
+    try:
+        import joblib
+        results = joblib.load(pkl_path)
+        
+        # Check if it's a dictionary with expected keys
+        if not isinstance(results, dict):
+            print(f"PKL validation failed: Not a dictionary")
+            return False
+            
+        # Check for basic required keys
+        required_keys = ['people', 'camera_world']
+        for key in required_keys:
+            if key not in results:
+                print(f"PKL validation failed: Missing key '{key}'")
+                return False
+        
+        # Check if people data exists and has expected structure
+        if 'people' in results and results['people']:
+            for pid, person_data in results['people'].items():
+                if 'smplx_world' not in person_data:
+                    print(f"PKL validation failed: Person {pid} missing 'smplx_world'")
+                    return False
+                if 'joints3d' not in person_data['smplx_world']:
+                    print(f"PKL validation failed: Person {pid} missing 'joints3d'")
+                    return False
+        
+        print(f"PKL validation passed: {len(results.get('people', {}))} people found")
+        return True
+        
+    except Exception as e:
+        print(f"PKL validation failed with error: {str(e)}")
+        return False
+
+
 def main(input_video: str, output_dir: str, static_camera: bool = False):
     """Main function to process video in batches."""
     
@@ -358,7 +394,18 @@ def main(input_video: str, output_dir: str, static_camera: bool = False):
                 pipeline = Pipeline(static_cam=static_camera)
                 
                 print(f"Processing video segment...")
-                results = pipeline.__call__(temp_video, batch_output_folder, save_only_essential=True)
+                results = pipeline.__call__(temp_video, batch_output_folder, batch_mode=True, save_only_essential=True)
+                
+                # Validate PKL file if it exists
+                pkl_path = os.path.join(batch_output_folder, "results.pkl")
+                if os.path.exists(pkl_path):
+                    print(f"Validating PKL file for batch {batch_num}...")
+                    if __validate_pkl_results(pkl_path):
+                        print(f"✓ PKL file validation passed for batch {batch_num}")
+                    else:
+                        print(f"⚠ PKL file validation failed for batch {batch_num}")
+                else:
+                    print(f"ℹ No PKL file generated for batch {batch_num} (batch mode)")
                 
                 # Calculate frame offset
                 frame_offset = int(current_time * fps)
@@ -392,14 +439,7 @@ def main(input_video: str, output_dir: str, static_camera: bool = False):
                 del pipeline
                 del results
                 
-                # Remove problematic pickle file if it exists
-                results_pkl_path = os.path.join(batch_output_folder, "results.pkl")
-                if os.path.exists(results_pkl_path):
-                    try:
-                        os.remove(results_pkl_path)
-                        print(f"Removed problematic pickle file: {results_pkl_path}")
-                    except:
-                        pass
+                # Note: Keep PKL files for validation - don't delete them
 
                 # Clean up temporary files
                 if os.path.exists(temp_video):
@@ -468,155 +508,24 @@ def main(input_video: str, output_dir: str, static_camera: bool = False):
         else:
             print("All processed batches completed successfully!")
 
-        # Now aggregate all the individual JSON files
+        # List all individual batch results instead of consolidating
         if successful_batches > 0:
-            print(f"\nAggregating {successful_batches} batch JSON files...")
-            try:
-                aggregate_json_files(input_video, output_dir, total_frames, successful_batches)
-            except Exception as agg_error:
-                print(f"Error during aggregation: {agg_error}")
-                import traceback
-                traceback.print_exc()
+            print(f"\nIndividual batch results available in:")
+            for batch_idx in range(successful_batches):
+                batch_folder = os.path.join(output_dir, f"batch_{batch_idx}")
+                poses_json = os.path.join(batch_folder, f"poses_batch_{batch_idx}.json")
+                camera_json = os.path.join(batch_folder, f"camera_batch_{batch_idx}.json")
+                pkl_file = os.path.join(batch_folder, "results.pkl")
+                
+                print(f"  Batch {batch_idx}:")
+                if os.path.exists(poses_json):
+                    print(f"    ✓ Poses: {poses_json}")
+                if os.path.exists(camera_json):
+                    print(f"    ✓ Camera: {camera_json}")
+                if os.path.exists(pkl_file):
+                    print(f"    ✓ PKL: {pkl_file}")
 
         print("Processing complete!")
-
-
-def aggregate_json_files(input_video: str, output_dir: str, total_frames: int, num_batches: int):
-    """Aggregate all batch JSON files into final outputs."""
-    print("Aggregating individual batch JSON files...")
-    
-    # Find all batch folders with JSON files
-    all_frames = {}
-    all_camera_frames = {}
-    sample_metadata = None  # To extract metadata from first batch
-    
-    for batch_num in range(num_batches):
-        batch_folder = os.path.join(output_dir, f"batch_{batch_num}")
-        poses_json_path = os.path.join(batch_folder, f"poses_batch_{batch_num}.json")
-        camera_json_path = os.path.join(batch_folder, f"camera_batch_{batch_num}.json")
-        
-        # Load poses
-        if os.path.exists(poses_json_path):
-            try:
-                with open(poses_json_path, 'r') as f:
-                    poses_data = json.load(f)
-                    all_frames.update(poses_data['frames'])
-                    # Capture metadata from first successful batch
-                    if sample_metadata is None:
-                        sample_metadata = poses_data.get('metadata', {})
-                    print(f"✓ Loaded poses from batch {batch_num}: {len(poses_data['frames'])} frames")
-            except Exception as e:
-                print(f"✗ Error loading poses from batch {batch_num}: {e}")
-        
-        # Load camera
-        if os.path.exists(camera_json_path):
-            try:
-                with open(camera_json_path, 'r') as f:
-                    camera_data = json.load(f)
-                    all_camera_frames.update(camera_data['frames'])
-                    print(f"✓ Loaded camera from batch {batch_num}: {len(camera_data['frames'])} frames")
-            except Exception as e:
-                print(f"✗ Error loading camera from batch {batch_num}: {e}")
-
-    # Create comprehensive final metadata with complete joint format information
-    final_poses = {
-        'metadata': {
-            'video_path': input_video,
-            'total_frames': total_frames,
-            'batch_size': 60,
-            'coordinate_system': 'floor_origin_xyz',
-            'joints3d_format': 'smplx_full',
-            'joints3d_structure': 'flattened [x,y,z] coordinates for ALL SMPL-X joints (body+hands+face)',
-            'joints3d_total_joints': 'variable (depends on SMPL-X configuration)',
-            'joints3d_joint_order': [
-                # SMPL-X Body joints (indices 0-21: 22 joints)
-                'pelvis', 'left_hip', 'right_hip', 'spine1', 'left_knee', 'right_knee',
-                'spine2', 'left_ankle', 'right_ankle', 'spine3', 'left_foot', 'right_foot',
-                'neck', 'left_collar', 'right_collar', 'head', 'left_shoulder', 'right_shoulder',
-                'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist',
-                # Face joints (indices 22-24: 3 joints) 
-                'jaw', 'left_eye_smplhf', 'right_eye_smplhf',
-                # Left hand joints (indices 25-39: 15 joints)
-                'left_index1', 'left_index2', 'left_index3', 'left_middle1', 'left_middle2', 'left_middle3',
-                'left_pinky1', 'left_pinky2', 'left_pinky3', 'left_ring1', 'left_ring2', 'left_ring3',
-                'left_thumb1', 'left_thumb2', 'left_thumb3',
-                # Right hand joints (indices 40-54: 15 joints)
-                'right_index1', 'right_index2', 'right_index3', 'right_middle1', 'right_middle2', 'right_middle3',
-                'right_pinky1', 'right_pinky2', 'right_pinky3', 'right_ring1', 'right_ring2', 'right_ring3',
-                'right_thumb1', 'right_thumb2', 'right_thumb3',
-                # Additional SMPL-X joints (if present - varies by model configuration)
-                # Face landmarks and additional hand joints may extend beyond index 54
-            ],
-            'joints2d_formats': {
-                'vitpose25': {
-                    'joint_count': 25,
-                    'data_structure': 'flattened [x0,y0,conf0, x1,y1,conf1, ...] for 25 keypoints',
-                    'joint_order': [
-                        'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
-                        'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
-                        'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
-                        'left_knee', 'right_knee', 'left_ankle', 'right_ankle',
-                        'left_big_toe', 'left_small_toe', 'left_heel',
-                        'right_big_toe', 'right_small_toe', 'right_heel',
-                        'neck', 'mid_hip'
-                    ],
-                    'coordinate_system': 'image_pixels_xy'
-                },
-                'coco17': {
-                    'joint_count': 17,
-                    'data_structure': 'flattened [x0,y0,conf0, x1,y1,conf1, ...] for 17 keypoints',
-                    'joint_order': [
-                        'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
-                        'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
-                        'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
-                        'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
-                    ],
-                    'coordinate_system': 'image_pixels_xy'
-                },
-                'bbox_center': {
-                    'joint_count': 1,
-                    'data_structure': '[x,y,conf]',
-                    'joint_order': ['bbox_center'],
-                    'coordinate_system': 'image_pixels_xy'
-                }
-            },
-            'data_preservation_note': 'ALL keypoints preserved without truncation or format conversion. 3D joints include complete SMPL-X structure. 2D format varies per person/frame - check joints2d_format field.',
-            'aggregation_info': {
-                'total_batches_processed': num_batches,
-                'batch_duration_seconds': 60
-            }
-        },
-        'frames': all_frames
-    }
-    
-    final_camera = {
-        'metadata': {
-            'video_path': input_video,
-            'total_frames': total_frames,
-            'coordinate_system': 'floor_origin'
-        },
-        'frames': all_camera_frames
-    }
-    
-    # Write final files
-    poses_output = os.path.join(output_dir, 'poses3d.json')
-    camera_output = os.path.join(output_dir, 'camera_traj.json')
-    
-    if all_frames:
-        with open(poses_output, 'w') as f:
-            json.dump(final_poses, f, indent=2)
-        print(f"✓ Final poses saved to: {poses_output}")
-        print(f"  Total frames with poses: {len(all_frames)}")
-    else:
-        print("✗ No pose data to aggregate")
-    
-    if all_camera_frames:
-        with open(camera_output, 'w') as f:
-            json.dump(final_camera, f, indent=2)
-        print(f"✓ Final camera trajectory saved to: {camera_output}")
-        print(f"  Total camera frames: {len(all_camera_frames)}")
-    else:
-        print("✗ No camera data to aggregate")
 
 
 if __name__ == '__main__':
